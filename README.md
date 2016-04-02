@@ -3,7 +3,7 @@
 We us the following Python libraries 
  * SoundCloud API wrapper https://github.com/soundcloud/soundcloud-python
  * Websocket client: https://pypi.python.org/pypi/websocket-client/
- * VLC Python bindings: https://github.com/oaubert/python-vlc
+ * VLC Python bindings: https://github.com/oaubert/python-vlc (which require a locally installed VLC player)
 
 To use the SoundCloud examples, you need an API key (CLIENT ID), which needs to be set as an environment variable `CLIENT_ID`. You can get that at http://soundcloud.com/you/apps/new
 
