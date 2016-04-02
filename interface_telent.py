@@ -23,7 +23,7 @@ class NuimoEvent(object):
         """
         self.raw_event = raw_event
         self._verb, self._value = self.decode_raw_event(raw_event)
-        super(self, NuimoEvent).__init__()
+        super(NuimoEvent, self).__init__()
 
 
     def decode_raw_event(self, raw_event):
@@ -93,7 +93,7 @@ class TelnetVlcController(MediaPlayerController):
     """
     def __init__(self):
         self.connection = telnetlib.Telnet(localhost, 4212)
-        super(self, TelnetVlcController).__init__()
+        super(TelnetVlcController, self).__init__()
 
 
 
