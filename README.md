@@ -2,6 +2,8 @@
 
 This repo demos how to control SoundCloud using a Senic Nuimo device, using the Nuimo web socket server, VLC and the SoundCloud API. 
 
+## Dependencies 
+
 We us the following Python libraries 
  * SoundCloud API wrapper https://github.com/soundcloud/soundcloud-python
  * Websocket client: https://pypi.python.org/pypi/websocket-client/
