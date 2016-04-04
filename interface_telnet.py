@@ -22,7 +22,6 @@ class RawNuimoEvent(object):
         :param raw_event: the char string received from the Nuimo
         :return:
         """
-        self.raw_event = raw_event
         self._action, self._value = self.decode_raw_event(raw_event)
         super(RawNuimoEvent, self).__init__()
 
@@ -32,7 +31,7 @@ class RawNuimoEvent(object):
         :return:
         """
         # http://www.regexr.com/3d4tq
-        action, value = re.match(r'([BRS]),([LRUD]?[-?\d]*)', self.raw_event).groups()
+        action, value = re.match(r'([BRS]),([LRUD]?[-?\d]*)', raw_event).groups()
         return action, value
 
     @property
@@ -62,10 +61,17 @@ class NuimoEvent(object):
     """
     A higher-level representation of a Nuimo event.
     This class is essentially a structured way to store all the pertinent characteristics of an event as
-    received form the Nuimo. This representation is stateful in that it tracks the state of the Nuimo's button
-    so this is known during the rotate event for example.
+    received form the Nuimo. This representation takes into account previous Nuimo states so it is possible
+    to determine whether the button is down when the wheel is being rotated, for example.
+
     """
-    def __init__(self, button_pressed=False, button_exclusive=True, rotate_delta=None, swipe_direction=None):
+    ACTIONS = ('button_press', 'button_release', 'rotate', 'swipe')
+
+    def __init__(self, action=None, button_pressed=False, button_exclusive=True,
+                 rotate_delta=None, swipe_direction=None):
+        if action not in self.ACTIONS:
+            raise ValueError('action {} is not supported.'.format(action))
+        self.action = action
         self.button_pressed = button_pressed
         # True if button release event was immediately preceded by button press, indicating no other events
         # during button press.
@@ -210,95 +216,53 @@ class NuimoGlyph(object):
 
 class NuimoController(object):
     """
-    A high-level abstraction for the Nuimo controller.
+    A high-level abstraction for the Nuimo controller. Consumes RawNuimoEvent objects, updates internal
+    state, and returns NuimoEvent objects representing updated state.
+
     """
     def __init__(self):
-        self.event_callbacks = {
-            'button_press': None,
-            'button_release': None,
-            'rotate': None,
-            'swipe': None
-        }
         self.states = {
             'button_pressed': False,
             'button_press_exclusive': True,
         }
         super(NuimoController, self).__init__()
 
-    def register_callback(self, event, callback):
+    def consume_raw_event(self, raw_event):
         """
-        Register a callback function to receive notification of a Nuimo Controller event.
-        :param event: one of 'button_press', 'wheel_rotate', or 'swipe'.
-        :param callback: Function which will be called when event occurs.
-        :return:
-        """
-        if event not in self.event_callbacks.keys():
-            raise ValueError('Event {} is not a recognised event. Possible events are: {}'.format(
-                event,
-                ', '.join(self.event_callbacks.keys())
-            ))
-        self.event_callbacks[event] = callback
-
-    def _button_press(self):
-        event = NuimoEvent(button_pressed=True)
-        cb = self.event_callbacks['button_press']
-        if cb is not None:
-            return cb(event)
-
-    def _button_release(self):
-        event = NuimoEvent(
-            button_pressed=False,
-            button_exclusive=self.states['button_press_exclusive']
-        )
-        cb = self.event_callbacks['button_release']
-        if cb is not None:
-            return cb(event)
-
-    def _rotate(self, delta):
-        event = NuimoEvent(
-            rotate_delta=delta,
-            button_pressed=self.states['button_pressed']
-        )
-        cb = self.event_callbacks['rotate']
-        if cb is not None:
-            return cb(event)
-
-    def _swipe(self, swipe_direction):
-        event = NuimoEvent(swipe_direction=swipe_direction)
-        cb = self.event_callbacks['swipe']
-        print(cb)
-        if cb is not None:
-            return cb(event)
-
-    def process_event(self, raw_event):
-        """
-        Process an incoming event.
+        Consume a RawNuimoEvent object, update internal state, and return a
+        NuimoEvent object which represents the updated internal state.
         :param raw_event: The incoming RawNuimoEvent.
-        :return: A NuimoGlyph to display on the LED matrix or None.
+        :return: A NuimoEvent object which represents the updated internal state.
         """
-        print('process nuimo event: ', raw_event.action, raw_event.value)
         if raw_event.action == 'B':
             # Button press/release
             if raw_event.value == '1':
                 self.states['button_pressed'] = True
                 self.states['button_press_exclusive'] = True
-                glyph = self._button_press()
+                event = NuimoEvent(action='button_press', button_pressed=True)
             else:
                 self.states['button_pressed'] = False
-                glyph = self._button_release()
+                event = NuimoEvent(
+                    action='button_release',
+                    button_pressed=False,
+                    button_exclusive=self.states['button_press_exclusive']
+                )
 
-        if raw_event.action == 'R':
+        elif raw_event.action == 'R':
             # Rotation
             self.states['button_press_exclusive'] = False
-            glyph = self._rotate(int(raw_event.value))
-        if raw_event.action != 'R':
-            # reset rotation delta
-            self.states['rotate_delta'] = 0.0
+            event = NuimoEvent(
+                action='rotate',
+                rotate_delta=int(raw_event.value),
+                button_pressed=self.states['button_pressed']
+            )
 
-        if raw_event.action == 'S':
-            # swipe
-            glyph = self._swipe(raw_event.value)
-        return glyph
+        elif raw_event.action == 'S':
+            # Swipe
+            event = NuimoEvent(action='swipe', swipe_direction=raw_event.value)
+        else:
+            raise ValueError('unsupported event consumed: {}'.format(raw_event.action))
+        return event
 
 
 class MediaPlayerController(object):
@@ -367,16 +331,16 @@ class MediaPlayerController(object):
         raise NotImplementedError
 
 
-class TelnetVlcController(MediaPlayerController):
+class TelnetVLCController(MediaPlayerController):
     """
-    A controller for VLC media player over Telent interface
+    A controller for VLC media player over Telnet interface
     """
     def __init__(self):
         self.connection = telnetlib.Telnet('localhost', 4212)
         self.connection.read_until('Password: ')
         self.connection.write(b'secret\n')
         print self.connection.read_until('>')
-        super(TelnetVlcController, self).__init__()
+        super(TelnetVLCController, self).__init__()
 
     def _send_command(self, cmd):
         print('send_command: ', cmd)
@@ -415,13 +379,8 @@ class NuimoVLCController(object):
     """
     A stateful media controller object.
     """
-    def __init__(self, nuimo, player_interface):
-        self.nuimo = nuimo
+    def __init__(self, player_interface):
         self.player_interface = player_interface
-        #nuimo.register_callback('button_press', self._button_press)
-        nuimo.register_callback('button_release', self._button_release)
-        nuimo.register_callback('rotate', self._rotate)
-        nuimo.register_callback('swipe', self._swipe)
 
         self.player_states = {
             'playing': False
@@ -482,13 +441,21 @@ class NuimoVLCController(object):
                 self.player_states['playing'] = False
                 return NuimoGlyph(symbol='STOP')
 
-    def process_event(self, event):
+    def consume_nuimo_event(self, event):
         """
-        Process an event from the Nuimo controller
-        :param event:
-        :return:
+        Consume a NuimoEvent object and perform the necessary control actions in the media player.
+        :param event: The NuimoEvent object to consume.
+        :return: A NuimoGlyph object to display on the device.
         """
-        return self.nuimo.process_event(event)
+        if event.action == 'button_release':
+            glyph = self._button_release(event)
+        elif event.action == 'rotate':
+            glyph = self._rotate(event)
+        elif event.action == 'swipe':
+            glyph = self._swipe(event)
+        else:
+            glyph = None
+        return glyph
 
 
 def run_interface():
@@ -499,13 +466,15 @@ def run_interface():
     from websocket import create_connection
 
     ws = create_connection('ws://localhost:8086/')
-    vlc_controller = NuimoVLCController(NuimoController(), TelnetVlcController())
+    nuimo_controller = NuimoController()
+    vlc_controller = NuimoVLCController(TelnetVLCController())
 
     try:
         while True:
-            event = RawNuimoEvent(ws.recv())
-            print "Received '%s'" % event
-            glyph = vlc_controller.process_event(event)
+            raw_event = RawNuimoEvent(ws.recv())
+            print "Received '%s'" % raw_event
+            nevent = nuimo_controller.consume_raw_event(raw_event)
+            glyph = vlc_controller.consume_nuimo_event(nevent)
             if glyph is not None:
                 ws.send(glyph.get_string())
 
